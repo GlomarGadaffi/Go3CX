@@ -1,109 +1,53 @@
 #!/bin/bash
 
 # Check if 3cxpbx is already installed
-if dpkg -s 3cxpbx | grep -q 'ok installed'; then
-	echo "3cxpbx already installed"
-	exit
+if dpkg -s 3cxpbx &> /dev/null; then
+    echo "3cxpbx already installed."
+    exit 0
 fi
 
-# Check Debian version
-if grep -q 'VERSION_ID="10"' /etc/os-release; then
-	# Debian Buster
-	echo "Detected Debian Buster (10)."
-	# Install sudo and gnupg2
-	cd ~/ || exit
-	apt install sudo
-	sudo apt install gnupg2
-	# Get 3CX public key and add it to apt keyring
-	echo "Getting 3CX public key..."
-	wget -O- http://downloads-global.3cx.com/downloads/3cxpbx/public.key | sudo apt-key add -
-	while ! wget -q http://downloads-global.3cx.com/downloads/3cxpbx/public.key -O- | sudo apt-key add -; do
-		echo "Can't get Public Key, retrying..."
-		sleep 5
-	done
-	# Add 3CX repository to sources.list.d
-	echo "deb http://downloads-global.3cx.com/downloads/debian buster main" | sudo tee /etc/apt/sources.list.d/3cxpbx.list
-	# Update repositories
-	sudo apt update
-	# Install necessary packages: open-vm-tools, net-tools, dphys-swapfile, 3cxpbx
-	sudo apt install open-vm-tools
-	sudo apt install net-tools dphys-swapfile
-	sudo apt install 3cxpbx
-elif grep -q 'VERSION_ID="11"' /etc/os-release; then
-	# Debian Bullseye
-	echo "Detected Debian Bullseye (11)."
-	# Create directory if it does not exist
-	echo "Creating /etc/3cxpbx directory..."
-	mkdir -p /etc/3cxpbx
-	# Define a function to update apt-get
-	echo "Defining update function..."
-	update() {
-	    # Wait for apt-get to be free
-	    echo ">>>>> Wait for apt-get free..."
-	    while fuser /var/{lib/{dpkg,apt/lists},cache/apt/archives}/lock >/dev/null 2>&1; do
-	        sleep 1
-	    done
-	    # Update the repositories
-	    echo ">>>>> Updating repositories..."
-	    while ! apt-get update
-	    do
-	        echo ">>>>> Error detected, retrying to update repositories..."
-	        sleep 5
-	    done
-	}
-	# Call the update function
-	echo "Updating repositories..."
-	update
-	# Get 3CX public key and add it to apt keyring
-	echo "Getting 3CX public key..."
-	wget -O- https://repo.3cx.com/key.pub | apt-key add -
-	while ! wget -q https://repo.3cx.com/key.pub -O- | apt-key add -; do
-		echo "Can't get Public Key, retrying..."
-		sleep 5
-	done
-	# Add 3CX repository to sources.list.d
-	echo "deb http://repo.3cx.com/3cx bullseye main" | tee /etc/apt/sources.list.d/3cxpbx.list
-	# Call the update function again
-	echo "Updating repositories..."
-	update
-	# Install necessary packages: apt-transport-https, coreutils, inetutils-ping, wget, dphys-swapfile, net-tools, gpg, nginx
-	echo "Installing utils and packages (apt-transport-https, coreutils, inetutils-ping, wget, dphys-swapfile, net-tools, gpg, nginx)..."
-	apt-get -y install apt-transport-https coreutils inetutils-ping wget dphys-swapfile net-tools gpg nginx
+# Detect Debian version
+DEBIAN_VERSION=$(grep 'VERSION_ID' /etc/os-release | cut -d '"' -f 2)
 
-	# Wait for network access
-	echo "Waiting for network (WAN) access..."
-	while ! ping -c 1 -W 1 google.com > /dev/null; do
-		echo "Network not up, interface might be down..."
-		sleep 1
-	done
+# Common installations
+apt install sudo lsb-release gnupg2 wget curl -y
 
-	# Get 3CX public key and add it to apt keyring
-	echo "Getting Public.key for 3CX."
-	wget -O- "http://downloads-global.3cx.com/downloads/3cxpbx/public.key" | apt-key add -
-	while ! wget -q http://downloads-global.3cx.com/downloads/3cxpbx/public.key -O- | apt-key add -; do
-		echo "Can't get Public Key, retrying..."
-		sleep 5
-	done
+# Function to update apt
+update() {
+    while fuser /var/{lib/{dpkg,apt/lists},cache/apt/archives}/lock >/dev/null 2>&1; do
+        sleep 1
+    done
+    while ! apt update; do
+        sleep 5
+    done
+}
 
-	# Add 3CX repository to sources.list.d
-	echo "deb http://downloads-global.3cx.com/downloads/debian stretch main" | tee /etc/apt/sources.list.d/3cxpbx.list
-
-	# Call the update function again
-	echo "Updating repositories..."
-	update
-
-	# Install 3CX PBX
-	echo "Installing 3CX PBX..."
-	while ! DEBIAN_FRONTEND=noninteractive apt-get -y install 3cxpbx
-	do
-	    echo "Can't install 3CX PBX, retrying..."
-	    sleep 5
-	done
-	echo "PBX Installed"
-
-	# Create file to indicate that 3cxpbx is installed
-	sudo touch /etc/3cxpbx/pbxinstalled
+# Add 3CX repo and key based on Debian version
+if [ "$DEBIAN_VERSION" == "10" ]; then
+    echo "Detected Debian Buster (10)."
+    wget -O- http://downloads-global.3cx.com/downloads/3cxpbx/public.key | apt-key add -
+    echo "deb http://downloads-global.3cx.com/downloads/debian buster main" | tee /etc/apt/sources.list.d/3cxpbx.list
+    apt install open-vm-tools net-tools dphys-swapfile -y
+elif [ "$DEBIAN_VERSION" == "11" ]; then
+    echo "Detected Debian Bullseye (11)."
+    wget -O- https://repo.3cx.com/key.pub | apt-key add -
+    echo "deb http://repo.3cx.com/3cx bullseye main" | tee /etc/apt/sources.list.d/3cxpbx.list
+    apt install apt-transport-https coreutils inetutils-ping dphys-swapfile net-tools gpg nginx -y
+else
+    echo "Unsupported Debian version."
+    exit 1
 fi
+
+# Update repositories
+update
+
+# Install 3CX
+while ! DEBIAN_FRONTEND=noninteractive apt install 3cxpbx -y; do
+    sleep 5
+done
+
+# Create file to indicate that 3cxpbx is installed
+touch /etc/3cxpbx/pbxinstalled
 
 # Done
 echo "Done."
